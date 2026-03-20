@@ -1,0 +1,58 @@
+<!-- ================== Bộ lọc ================== -->
+<section class="container my-4">
+  <form method="get" class="d-flex align-items-center">
+    <input type="hidden" name="keyword" value="{{keyword}}">
+    <input type="hidden" name="limit" value="{{limit}}">
+    <label for="sort" class="me-2 fw-semibold">Arrange by:</label>
+
+    <select name="sort" id="sort" class="form-select w-auto" onchange="this.form.submit()">
+      <option value="rating"     {{#if (eq sort "rating")}}selected{{/if}}>Rating: High to Low</option>
+      <option value="price"      {{#if (eq sort "price")}}selected{{/if}}>Price: Low to High</option>
+      <option value="newest"     {{#if (eq sort "newest")}}selected{{/if}}>Newest</option>
+      <option value="bestseller" {{#if (eq sort "bestseller")}}selected{{/if}}>Best Seller</option>
+    </select>
+  </form>
+</section>
+
+<!-- ================== Kết quả tìm kiếm ================== -->
+{{#if (empty courses)}}
+  <div class="alert alert-info text-center shadow-sm p-4 mt-5 rounded-4" style="max-width: 700px; margin: 0 auto;">
+    <h5 class="mb-3 text-primary fw-semibold">No courses found</h5>
+    <p class="mb-0 text-muted">Try using other keywords or contact support if needed.</p>
+  </div>
+{{else}}
+  <div class="container">
+    {{#if keyword}}
+      <h4 class="fw-bold mb-3">Search results for "{{keyword}}" ({{totalCount}})</h4>
+    {{/if}}
+
+    <div class="row g-4">
+      {{#each courses}}
+        <div class="col-md-3">
+          {{> cardCourses}}
+        </div>
+      {{/each}}
+    </div>
+  </div>
+{{/if}}
+
+<!-- ================== Phân trang ================== -->
+{{#if pagination}}
+  <nav aria-label="Page navigation" class="mt-4">
+    <ul class="pagination justify-content-center">
+      <li class="page-item {{#unless pagination.hasPrev}}disabled{{/unless}}">
+        <a class="page-link" href="{{pagination.prevUrl}}" aria-label="Previous">&laquo;</a>
+      </li>
+
+      {{#each pagination.pages}}
+        <li class="page-item {{#if active}}active{{/if}}">
+          <a class="page-link" href="{{url}}">{{page}}</a>
+        </li>
+      {{/each}}
+
+      <li class="page-item {{#unless pagination.hasNext}}disabled{{/unless}}">
+        <a class="page-link" href="{{pagination.nextUrl}}" aria-label="Next">&raquo;</a>
+      </li>
+    </ul>
+  </nav>
+{{/if}}

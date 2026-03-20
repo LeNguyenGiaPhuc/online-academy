@@ -1,0 +1,405 @@
+{{!-- views/vwInstructor/sections.handlebars --}}
+<div class="container py-4">
+  <!-- ======= PAGE HEADER ======= -->
+  <div class="d-flex justify-content-between align-items-center mb-3 page-enter">
+    <div>
+      <h3 class="mb-0 fw-bold">
+        <i class="bi bi-list-check me-2"></i> Course Content
+      </h3>
+      <div class="text-muted small">
+        <span class="me-2">#{{course.id}}</span> — <span class="fw-semibold">{{course.title}}</span>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <a href="/instructor/courses/{{course.id}}/edit" class="btn btn-outline-secondary" data-bs-toggle="tooltip" data-bs-title="Edit title, descriptions, cover, pricing">
+        <i class="bi bi-pencil-square me-1"></i> Edit preview
+      </a>
+      <a href="/instructor/my-course" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+      </a>
+
+      {{#unless course.is_completed}}
+      <button class="btn btn-success" id="btnOpenComplete">
+        <i class="bi bi-check2-circle me-1"></i> Mark completed
+      </button>
+      {{/unless}}
+    </div>
+  </div>
+
+  {{> flash}}
+
+  <!-- ======= QUICK HELP ======= -->
+  <div class="alert alert-light border softshadow small page-enter">
+    <div class="d-flex align-items-start gap-3">
+      <i class="bi bi-info-circle text-primary fs-5"></i>
+      <div>
+        <div class="fw-semibold mb-1">How to add lessons (3 steps)</div>
+        <ol class="mb-0 ps-3">
+          <li>Create a <strong>Section</strong> (e.g., “Getting Started”).</li>
+          <li>Use <strong>Upload</strong> to send your <code>.mp4/.webm/.ogg</code> (or paste a <strong>YouTube URL</strong>).</li>
+          <li>Click <strong>Add Lesson</strong> / <strong>Save Lesson</strong>. ✅</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= ADD SECTION ======= -->
+  <div class="card mb-4 softshadow hover-lift page-enter">
+    <div class="card-header fw-semibold">
+      <i class="bi bi-layout-text-window-reverse me-2"></i> Add Section
+    </div>
+    <div class="card-body">
+      <form method="post" action="/instructor/sections" class="row g-3 align-items-end js-protect-submit">
+        <input type="hidden" name="course_id" value="{{course.id}}">
+        <div class="col-md-7">
+          <label class="form-label fw-semibold">Title <span class="text-danger">*</span></label>
+          <input name="title" class="form-control form-control-lg" required placeholder="e.g., Introduction">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fw-semibold">Order</label>
+          <input name="order_no" type="number" class="form-control" min="1" value="1">
+        </div>
+        <div class="col-md-3 text-end">
+          <button class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i> Add Section
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======= SECTIONS & LESSONS ======= -->
+  {{#if sections.length}}
+    <div class="accordion page-enter-stagger" id="accSections">
+      {{#each sections}}
+        <div class="accordion-item softshadow border-0 mb-3">
+          <h2 class="accordion-header" id="h{{this.id}}">
+            <button
+              class="accordion-button {{#unless @first}}collapsed{{/unless}}"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#c{{this.id}}"
+              aria-expanded="{{#if @first}}true{{else}}false{{/if}}"
+            >
+              <span class="badge me-2 bg-secondary-subtle text-dark border">#{{this.order_no}}</span>
+              <span class="fw-semibold">{{this.title}}</span>
+            </button>
+          </h2>
+
+          <div id="c{{this.id}}" class="accordion-collapse collapse {{#if @first}}show{{/if}}" data-bs-parent="#accSections">
+            <div class="accordion-body">
+
+              <!-- Section editor -->
+              <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+                <form class="row g-2 align-items-end js-protect-submit" method="post" action="/instructor/sections/{{this.id}}">
+                  <div class="col-md-7">
+                    <label class="form-label fw-semibold">Title</label>
+                    <input name="title" class="form-control" value="{{this.title}}" required>
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label fw-semibold">Order</label>
+                    <input name="order_no" type="number" class="form-control" min="1" value="{{this.order_no}}">
+                  </div>
+                  <div class="col-md-3 text-end">
+                    <button class="btn btn-outline-primary">
+                      <i class="bi bi-save2 me-1"></i> Save section
+                    </button>
+                  </div>
+                </form>
+
+                <form method="post" action="/instructor/sections/{{this.id}}/delete"
+                      onsubmit="return confirm('Delete this section (no lessons)?');">
+                  <button class="btn btn-outline-danger">
+                    <i class="bi bi-trash3 me-1"></i> Delete
+                  </button>
+                </form>
+              </div>
+
+              <!-- Lessons table -->
+              <div class="table-responsive mb-3">
+                <table class="table table-sm table-hover align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th style="width:60px">#</th>
+                      <th style="width:28%">Title</th>
+                      <th style="width:36%">Video URL</th>
+                      <th style="width:100px">Duration</th>
+                      <th style="width:100px">Preview</th>
+                      <th class="text-end" style="width:240px">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {{#if this.lessons.length}}
+                      {{#each this.lessons}}
+                        <tr class="row-lift">
+                          <td>{{inc @index}}</td>
+                          <td class="text-truncate" title="{{this.title}}">{{this.title}}</td>
+                          <td class="text-truncate">
+                            {{#if this.video_url}}
+                              <a href="{{this.video_url}}" target="_blank">{{this.video_url}}</a>
+                            {{else}}
+                              <span class="text-muted">—</span>
+                            {{/if}}
+                          </td>
+                          <td>{{#if this.duration_sec}}{{this.duration_sec}}s{{else}}—{{/if}}</td>
+                          <td>{{#if this.is_preview}}Yes{{else}}No{{/if}}</td>
+                          <td class="text-end">
+                            <button class="btn btn-sm btn-outline-secondary" type="button"
+                                    data-bs-toggle="collapse" data-bs-target="#editL{{this.id}}">
+                              <i class="bi bi-pencil-square me-1"></i> Edit
+                            </button>
+                            <form method="post" action="/instructor/lessons/{{this.id}}/delete"
+                                  class="d-inline js-protect-submit"
+                                  onsubmit="return confirm('Delete this lesson?');">
+                              <button class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-trash3 me-1"></i> Delete
+                              </button>
+                            </form>
+                          </td>
+                        </tr>
+
+                        <!-- Inline edit row -->
+                        <tr class="collapse" id="editL{{this.id}}">
+                          <td colspan="6">
+                            <div class="card border-0 softshadow">
+                              <div class="card-body">
+                                <form class="row g-3 align-items-end js-protect-submit" method="post" action="/instructor/lessons/{{this.id}}">
+                                  <div class="col-md-4">
+                                    <label class="form-label fw-semibold">Title</label>
+                                    <input name="title" class="form-control" value="{{this.title}}" required>
+                                  </div>
+
+                                  <div class="col-md-5">
+                                    <label class="form-label fw-semibold">Video URL</label>
+
+                                    <div class="input-group mt-2">
+                                      <input id="video_url_{{this.id}}" name="video_url"
+                                             class="form-control"
+                                             value="{{this.video_url}}"
+                                             required
+                                             pattern="^(\/uploads\/.+|\/uploads\/.+|https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/).+)$"
+                                             title="Dùng /uploads/... (tạm) hoặc /uploads/... (final) hoặc YouTube URL (watch?v=... / youtu.be/...)">
+                                      <button class="btn btn-outline-secondary btn-upload" type="button" data-target-input="video_url_{{this.id}}" data-status="status_{{this.id}}">
+                                        <i class="bi bi-upload me-1"></i> Upload
+                                      </button>
+                                      <button class="btn btn-outline-secondary btn-copy" type="button" data-target-input="video_url_{{this.id}}">
+                                        <i class="bi bi-clipboard-check me-1"></i> Copy
+                                      </button>
+                                    </div>
+                                    <div class="form-text">
+                                      When Save is successful, the system automatically switches to <code>/uploads/...</code>.
+                                      You can also paste YouTube URL (watch?v=... / youtu.be/...).
+                                    </div>
+
+                                    <div class="d-flex align-items-center gap-2 mt-2 small text-muted" id="status_{{this.id}}"></div>
+                                  </div>
+
+                                  <div class="col-md-2">
+                                    <label class="form-label fw-semibold">Duration (s)</label>
+                                    <input name="duration_sec" type="number" min="0" class="form-control" value="{{this.duration_sec}}">
+                                  </div>
+
+                                  <div class="col-md-1">
+                                    <label class="form-label fw-semibold">Ord</label>
+                                    <input name="order_no" type="number" min="1" class="form-control" value="{{this.order_no}}">
+                                  </div>
+
+                                  <div class="col-md-12">
+                                    <div class="form-check">
+                                      <input class="form-check-input" type="checkbox" name="is_preview" id="preview_{{this.id}}" {{#if this.is_preview}}checked{{/if}}>
+                                      <label class="form-check-label" for="preview_{{this.id}}">Mark as free preview</label>
+                                    </div>
+                                  </div>
+
+                                  <div class="col-12 text-end">
+                                    <button class="btn btn-primary">
+                                      <i class="bi bi-save2 me-1"></i> Save lesson
+                                    </button>
+                                  </div>
+                                </form>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      {{/each}}
+                    {{else}}
+                      <tr><td colspan="6" class="text-muted">No lessons yet in this section.</td></tr>
+                    {{/if}}
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Add Lesson -->
+            <div class="card">
+              <div class="card-header fw-semibold">
+                <i class="bi bi-plus-square me-2"></i> Add Lesson
+              </div>
+              <div class="card-body">
+                <form class="row g-3 align-items-end js-protect-submit" method="post" action="/instructor/lessons">
+                  <input type="hidden" name="section_id" value="{{this.id}}">
+
+                  <div class="col-md-4">
+                    <label class="form-label fw-semibold">Title</label>
+                    <input name="title" class="form-control" required placeholder="e.g., Welcome & Setup">
+                  </div>
+
+                  <div class="col-md-5">
+                    <label class="form-label fw-semibold">Video URL</label>
+
+                    <div class="input-group mt-2">
+                      <input id="new_video_{{this.id}}" name="video_url"
+                            class="form-control"
+                            placeholder="/uploads/... (tạm) hoặc /uploads/... hoặc YouTube URL"
+                            required
+                            pattern="^(\/uploads\/.+|\/uploads\/.+|https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/).+)$"
+                            title="Dùng /uploads/... (tạm) hoặc /uploads/... (final) hoặc YouTube URL (watch?v=... / youtu.be/...)">
+                      <button class="btn btn-outline-secondary btn-upload" type="button" data-target-input="new_video_{{this.id}}" data-status="status_new_{{this.id}}">
+                        <i class="bi bi-upload me-1"></i> Upload
+                      </button>
+                      <button class="btn btn-outline-secondary btn-copy" type="button" data-target-input="new_video_{{this.id}}">
+                        <i class="bi bi-clipboard-check me-1"></i> Copy
+                      </button>
+                    </div>
+                    <div class="form-text">
+                      Upload sẽ trả <code>/repouploads/...</code> (tạm). When Add is successful, the system automatically switches to <code>/uploads/...</code>.
+                      You can also paste YouTube URL(watch?v=... / youtu.be/...).
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2 mt-2 small text-muted" id="status_new_{{this.id}}"></div>
+                  </div>
+
+                  <div class="col-md-2">
+                    <label class="form-label fw-semibold">Duration (s)</label>
+                    <input name="duration_sec" type="number" min="0" class="form-control">
+                  </div>
+
+                  <!-- 🆕 Hiển thị Ord kế tiếp (readonly, không submit) -->
+                  <div class="col-md-1">
+                    <label class="form-label fw-semibold">Next Ord</label>
+                    <input class="form-control" value="{{this.next_order}}" readonly disabled>
+                  </div>
+
+                  <div class="col-md-12">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" name="is_preview" id="add_preview_{{this.id}}">
+                      <label class="form-check-label" for="add_preview_{{this.id}}">Mark as free preview</label>
+                    </div>
+                  </div>
+
+                  <div class="col-12 text-end">
+                    <button class="btn btn-primary">
+                      <i class="bi bi-plus-circle me-1"></i> Add lesson
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+
+            </div> <!-- /accordion-body -->
+          </div>
+        </div>
+      {{/each}}
+    </div>
+  {{else}}
+    <div class="alert alert-info softshadow page-enter">
+      This course has no sections yet — create your first section above.
+    </div>
+  {{/if}}
+</div>
+
+<style>
+  .softshadow { box-shadow: 0 6px 18px rgba(0,0,0,.06); }
+  .hover-lift { transition: transform .18s ease, box-shadow .18s ease; }
+  .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.08); }
+  .row-lift { transition: transform .15s ease, box-shadow .18s ease, background-color .25s ease; }
+  .row-lift:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.07); background-color:#fcfcfd; }
+  .page-enter { animation: enter .28s ease both; }
+  .page-enter-stagger > [class*='col'], .page-enter-stagger.loaded tbody tr { animation: itemIn .34s ease both; }
+  @keyframes enter { from{opacity:0; transform: translateY(-6px)} to{opacity:1; transform:none} }
+  @keyframes itemIn { from{opacity:0; transform: translateY(8px)} to{opacity:1; transform:none} }
+</style>
+
+{{!-- ======= Uploader (reused hidden input) ======= --}}
+<input type="file" id="__videoUploader" accept="video/mp4,video/webm,video/ogg" class="d-none" />
+
+<script>
+  // Tooltip & stagger
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.bootstrap) {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+    }
+    const wrap = document.querySelector('.page-enter-stagger');
+    if (wrap) wrap.classList.add('loaded');
+  });
+
+  // Copy helper
+  function copyToClipboard(inputEl) {
+    inputEl.select?.();
+    try {
+      navigator.clipboard?.writeText(inputEl.value) || document.execCommand('copy');
+    } catch {}
+  }
+
+  // Upload via /instructor/upload
+  (function initLessonUploaders(){
+    const hiddenFile = document.getElementById('__videoUploader');
+
+    let targetInput = null;
+    let statusEl = null;
+
+    // when user picked a file
+    hiddenFile.addEventListener('change', async () => {
+      if (!targetInput || !hiddenFile.files?.length) return;
+
+      const file = hiddenFile.files[0];
+      const fd = new FormData();
+      fd.append('file', file);
+
+      if (statusEl) statusEl.innerHTML = '<span class="text-primary"><i class="bi bi-cloud-upload"></i> Uploading...</span>';
+
+      try {
+        const resp = await fetch('/instructor/upload', { method: 'POST', body: fd });
+        const json = await resp.json();
+
+        if (!resp.ok || !json?.url) {
+          throw new Error(json?.error || 'Upload failed');
+        }
+
+        // fill input with TEMP /repouploads/....mp4 (finalize khi Save/Add)
+        targetInput.value = json.url;
+        if (statusEl) statusEl.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Uploaded</span>';
+      } catch (err) {
+        console.error('Upload error:', err);
+        if (statusEl) statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + (err.message || 'Upload error') + '</span>';
+  alert('Unable to upload video. ' + (err.message || ''));
+      } finally {
+        // reset input so picking the same file again still triggers change
+        hiddenFile.value = '';
+      }
+    });
+
+    // delegate click events for all .btn-upload & .btn-copy
+    document.addEventListener('click', (ev) => {
+      const upBtn = ev.target.closest('.btn-upload');
+      const cpBtn = ev.target.closest('.btn-copy');
+      if (upBtn) {
+        const inputId = upBtn.getAttribute('data-target-input');
+        const statusId = upBtn.getAttribute('data-status');
+        targetInput = document.getElementById(inputId);
+        statusEl = statusId ? document.getElementById(statusId) : null;
+        if (!targetInput) return alert('Target input not found.');
+        hiddenFile.click();
+      }
+      if (cpBtn) {
+        const inputId = cpBtn.getAttribute('data-target-input');
+        const i = document.getElementById(inputId);
+        if (!i || !i.value) return;
+        copyToClipboard(i);
+        cpBtn.classList.add('btn-success');
+        setTimeout(() => cpBtn.classList.remove('btn-success'), 600);
+      }
+    });
+  })();
+</script>

@@ -1,0 +1,229 @@
+{{!-- views/vwInstructor/index.handlebars --}}
+<div class="container py-4">
+  <!-- ===== HEADER ===== -->
+  <div class="d-flex justify-content-between align-items-center mb-4 page-enter">
+    <div>
+      <h3 class="fw-bold mb-1">
+        <i class="bi bi-person-workspace me-2"></i> Instructor Overview
+      </h3>
+  <div class="text-muted">Hello, {{user.name}} — here is a brief report about your courses</div>
+    </div>
+    <a class="btn btn-primary" href="/instructor/courses/new">
+      <i class="bi bi-plus-circle me-1"></i> New Course
+    </a>
+  </div>
+
+  {{> flash}}
+
+  {{#if metrics}}
+  <!-- ===== METRICS ===== -->
+  <div class="row g-3 page-enter-stagger mb-4">
+    <div class="col-6 col-lg-3">
+      <div class="card kpi hover-lift">
+        <div class="card-body">
+          <div class="kpi-label">Total Courses</div>
+          <div class="kpi-value">{{metrics.total_courses}}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card kpi hover-lift">
+        <div class="card-body">
+          <div class="kpi-label">Total Students</div>
+          <div class="kpi-value">{{metrics.total_students}}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card kpi hover-lift">
+        <div class="card-body">
+          <div class="kpi-label">Avg. Rating</div>
+          <div class="kpi-value">{{metrics.avg_rating}}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card kpi hover-lift">
+        <div class="card-body">
+          <div class="kpi-label">Total Views</div>
+          <div class="kpi-value">{{metrics.total_views}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{/if}}
+
+  {{!-- Debug tạm thời, xoá sau khi OK --}}
+  <pre class="text-muted small">courses.length = {{courses.length}}</pre>
+
+  {{#if courses.length}}
+    <!-- ===== COURSE LIST ===== -->
+    <div class="table-responsive softshadow rounded-3 border bg-white page-enter-stagger">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light text-secondary small text-uppercase">
+          <tr>
+            <th style="width:56px;">#</th>
+            <th>Course</th>
+            <th style="width:180px;">Category</th>
+            <th style="width:160px;">Students</th>
+            <th style="width:160px;">Rating</th>
+            <th style="width:140px;">Views</th>
+            <th class="text-end" style="width:320px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each courses}}
+          <tr class="row-lift">
+            {{!-- chỉ dùng add, không dùng inc --}}
+            <td class="text-muted">{{add (../startIndex) (add @index 1)}}</td>
+
+            <td class="text-truncate" style="max-width: 520px;">
+              <div class="d-flex align-items-center gap-3">
+                {{#if this.cover_url}}
+                  <img src="{{this.cover_url}}" alt="cover" class="rounded border"
+                       style="width:72px;height:72px;object-fit:cover;">
+                {{else}}
+                  <div class="rounded bg-light border d-flex align-items-center justify-content-center"
+                       style="width:72px;height:72px;">
+                    <i class="bi bi-image text-muted fs-4"></i>
+                  </div>
+                {{/if}}
+
+                <div class="flex-grow-1">
+                  <div class="fw-semibold text-dark text-truncate" title="{{this.title}}">
+                    {{this.title}}
+                    {{#if this.is_completed}}
+                      <span class="badge bg-success ms-1 align-middle">Completed</span>
+                    {{else}}
+                      <span class="badge bg-warning text-dark ms-1 align-middle">Draft</span>
+                    {{/if}}
+                  </div>
+
+                  <div class="small text-muted mt-1">
+                    {{#if this.last_updated_at}}
+                      <i class="bi bi-clock me-1"></i>
+                      Updated: {{formatDate this.last_updated_at}}
+                    {{/if}}
+                    {{#if this.rating_count}}
+                      <span class="mx-2">•</span>
+                      <i class="bi bi-star-fill text-warning"></i> {{this.rating_avg}} ({{this.rating_count}})
+                    {{/if}}
+                  </div>
+                </div>
+              </div>
+            </td>
+
+            <td>
+              <span class="badge bg-light text-dark border">
+                {{#if this.category}}{{this.category}}{{else}}{{this.cat_id}}{{/if}}
+              </span>
+            </td>
+
+            <td>
+              {{#if this.students_count}}
+                <strong>{{this.students_count}}</strong>
+              {{else}}
+                <span class="text-muted">0</span>
+              {{/if}}
+            </td>
+
+            <td>
+              {{#if this.rating_count}}
+                <span class="text-warning">★</span> <strong>{{this.rating_avg}}</strong>
+                <small class="text-muted">({{this.rating_count}})</small>
+              {{else}}
+                <span class="text-muted">—</span>
+              {{/if}}
+            </td>
+
+            <td>
+              {{#if this.view_count}}
+                <strong>{{this.view_count}}</strong>
+              {{else}}
+                <span class="text-muted">0</span>
+              {{/if}}
+            </td>
+
+            <td class="text-end">
+              <div class="btn-group" role="group" aria-label="Row actions">
+                <a class="btn btn-sm btn-primary" href="/instructor/preview/{{this.id}}">
+                  <i class="bi bi-eye me-1"></i> View
+                </a>
+              </div>
+            </td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+
+  {{else}}
+    <!-- EMPTY STATE -->
+    <div class="empty-wrap text-center softshadow border rounded-3 p-5 page-enter">
+      <div class="fs-1 mb-3">🎬</div>
+  <h4 class="fw-bold mb-2">You don't have any courses yet</h4>
+  <p class="text-muted">Create your first course to start teaching and see how it appears to students.</p>
+      <a class="btn btn-primary btn-lg mt-2" href="/instructor/courses/new">
+        <i class="bi bi-plus-circle me-1"></i> Create your first course
+      </a>
+    </div>
+  {{/if}}
+</div>
+
+<style>
+  .softshadow { box-shadow: 0 6px 18px rgba(0,0,0,.06); }
+  .hover-lift { transition: transform .18s ease, box-shadow .18s ease; }
+  .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.08); }
+  .row-lift { transition: transform .15s ease, box-shadow .18s ease, background-color .25s ease; }
+  .row-lift:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.07); background-color:#fcfcfd; }
+
+  .kpi { border: 0; }
+  .kpi-label { color:#6c757d; font-size:.85rem; }
+  .kpi-value { font-size:1.6rem; font-weight:700; }
+
+  .empty-wrap { background: linear-gradient(180deg,#fff, #fafbfe); }
+
+.page-enter { 
+  animation: enter .28s ease both; 
+}
+
+/* ✅ Mặc định hiển thị bình thường (opacity:1) */
+.page-enter-stagger > [class*='col'],
+.page-enter-stagger tbody tr {
+  opacity: 1;
+  transform: none;
+}
+
+/* ✅ Khi có .loaded thì mới animate */
+.page-enter-stagger.loaded > [class*='col'],
+.page-enter-stagger.loaded tbody tr {
+  animation: itemIn .34s ease both;
+}
+
+/* ✅ Các delay nhỏ cho cột/row khi animate */
+.page-enter-stagger.loaded > [class*='col']:nth-child(1) { animation-delay:.02s; }
+.page-enter-stagger.loaded > [class*='col']:nth-child(2) { animation-delay:.06s; }
+.page-enter-stagger.loaded > [class*='col']:nth-child(3) { animation-delay:.10s; }
+.page-enter-stagger.loaded > [class*='col']:nth-child(4) { animation-delay:.14s; }
+
+@keyframes enter { 
+  from { opacity:0; transform: translateY(-6px); } 
+  to { opacity:1; transform:none; } 
+}
+@keyframes itemIn { 
+  from { opacity:0; transform: translateY(8px); } 
+  to { opacity:1; transform:none; } 
+}
+
+</style>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const wrap = document.querySelector('.page-enter-stagger');
+    if (wrap) wrap.classList.add('loaded');
+    if (window.bootstrap) {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+    }
+  });
+</script>
+

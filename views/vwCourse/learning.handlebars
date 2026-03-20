@@ -1,0 +1,214 @@
+<main class="container-fluid py-0">
+  <div class="row g-0">
+    <!-- ======= VIDEO PLAYER BÊN TRÁI ======= -->
+    <div class="col-12 col-lg-8">
+      <div
+        class="player-wrapper position-relative rounded overflow-hidden bg-light shadow-sm"
+        style="width: 100%; aspect-ratio: 16/9; min-height: 400px;"
+      >
+        <!-- 🎬 Plyr.js Player -->
+        <div id="video-container" class="w-100 h-100" style="display: none;">
+          <video
+            id="learning-video"
+            playsinline
+            controls
+            preload="auto"
+            poster="/static/images/video-placeholder.jpg"
+            class="w-100 h-100 rounded shadow-sm"
+            style="object-fit: cover;"
+          ></video>
+        </div>
+
+        <!-- 🖼️ Placeholder khi chưa chọn bài -->
+        <div
+          id="placeholder"
+          class="d-flex flex-column align-items-center justify-content-center position-absolute top-0 start-0 w-100 h-100"
+          style="background-color: #f8f9fa; opacity: 1; transition: opacity 0.4s ease; z-index: 2;"
+        >
+          <img
+            src="https://cdn-icons-png.flaticon.com/512/2920/2920244.png"
+            alt="No video selected"
+            width="120"
+          />
+          <p class="text-muted mt-3 fs-6 text-center">
+            Select a lesson to start watching the video
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= DANH SÁCH BÀI HỌC ======= -->
+    <div class="col-12 col-lg-4 px-4 py-3">
+      <div class="learning-sidebar card shadow-sm border-0 sticky-top" style="top: 20px;">
+        <div class="card-body">
+          <h5 class="fw-bold mb-3 text-primary">
+            <i class="bi bi-collection-play"></i>
+            Lecture List
+          </h5>
+
+          {{#each sections}}
+          <div class="mb-3">
+            <h6 class="fw-semibold text-secondary">{{title}}</h6>
+            <ul class="list-group list-group-flush">
+              {{#each lessons}}
+              <li class="list-group-item p-2">
+                <button
+                  id="lesson-{{id}}"
+                  class="btn btn-link text-decoration-none w-100 text-start lesson-item"
+                  onclick="loadVideo('{{video_url}}','{{id}}')"
+                >
+                  ▶ {{title}}
+                </button>
+              </li>
+              {{/each}}
+            </ul>
+          </div>
+          {{/each}}
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ✅ Plyr.js CDN -->
+<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+<script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+
+<script>
+  let player;
+  let lastSent = 0;
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // 🎬 Khởi tạo Plyr
+    player = new Plyr("#learning-video", {
+      ratio: "16:9",
+      controls: [
+        "play-large",
+        "play",
+        "progress",
+        "current-time",
+        "duration",
+        "mute",
+        "volume",
+        "settings",
+        "fullscreen",
+      ],
+    });
+
+    const videoContainer = document.getElementById("video-container");
+    const placeholder = document.getElementById("placeholder");
+
+    // Ban đầu ẩn player
+    videoContainer.style.display = "none";
+    placeholder.style.opacity = "1";
+    placeholder.style.pointerEvents = "auto";
+
+    // Theo dõi tiến độ mỗi khi update
+    player.on("timeupdate", () => {
+      const lessonId = window.currentLessonId;
+      if (!lessonId || !player.duration) return;
+
+      const current = Math.floor(player.currentTime);
+      const duration = Math.floor(player.duration);
+
+      if (current - lastSent >= 10) {
+        lastSent = current;
+        const isDone = current / duration >= 0.5;
+        sendProgress(lessonId, current, isDone);
+      }
+    });
+
+    // Khi xem xong video
+    player.on("ended", () => {
+      const lessonId = window.currentLessonId;
+      if (!lessonId) return;
+      const duration = Math.floor(player.duration);
+      sendProgress(lessonId, duration, true);
+      console.log(`✅ Hoàn thành bài học: ${lessonId}`);
+
+      // Hiện lại placeholder
+      placeholder.style.opacity = "1";
+      placeholder.style.pointerEvents = "auto";
+      placeholder.style.zIndex = "2";
+    });
+  });
+
+  // ✅ Hàm load video khi click
+  function loadVideo(filename, lessonId) {
+    window.currentLessonId = lessonId;
+    lastSent = 0;
+
+    const placeholder = document.getElementById("placeholder");
+    const videoContainer = document.getElementById("video-container");
+
+    if (!filename) {
+      alert("❌ Không tìm thấy video!");
+      return;
+    }
+
+    // Hiện player, ẩn placeholder
+    placeholder.style.opacity = "0";
+    placeholder.style.pointerEvents = "none";
+    placeholder.style.zIndex = "0";
+    videoContainer.style.display = "block";
+
+    // Dừng video cũ
+    if (player && !player.paused) player.pause();
+
+    // Nạp video mới
+    const safeSrc = decodeURIComponent(filename);
+    player.source = {
+      type: "video",
+      sources: [{ src: safeSrc, type: "video/mp4" }],
+    };
+
+    player.once("ready", () => {
+      player.play().catch((err) => {
+        console.warn("⚠️ Không thể tự động phát video:", err);
+      });
+    });
+
+    // Highlight bài học
+    document.querySelectorAll(".lesson-item").forEach((btn) =>
+      btn.classList.remove("active-lesson")
+    );
+    const activeBtn = document.getElementById(`lesson-${lessonId}`);
+    if (activeBtn) activeBtn.classList.add("active-lesson");
+  }
+
+  // ✅ Gửi tiến độ học lên server
+  async function sendProgress(lessonId, watchedSec, isDone) {
+    try {
+      const res = await fetch(`/student/progress/${lessonId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watched_sec: watchedSec,
+          is_done: isDone,
+        }),
+      });
+
+      if (!res.ok) {
+        console.error(`⚠️ Lưu tiến độ thất bại: ${lessonId}`, res.status);
+      } else {
+        console.log(`📩 Đã lưu tiến độ bài ${lessonId}: ${watchedSec}s, done=${isDone}`);
+      }
+    } catch (err) {
+      console.error("❌ Lỗi khi gửi tiến độ:", err);
+    }
+  }
+</script>
+
+<style>
+  .lesson-item.active-lesson {
+    background-color: #e7f1ff !important;
+    border-radius: 6px;
+    color: #0d6efd !important;
+    font-weight: 600;
+  }
+
+  .player-wrapper video {
+    border-radius: 10px;
+    object-fit: cover;
+  }
+</style>

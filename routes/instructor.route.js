@@ -1,0 +1,749 @@
+// routes/instructor.route.js
+import express from 'express';
+import path from 'path';
+import fs from 'fs';
+import multer from 'multer';
+import sanitizeHtml from 'sanitize-html';
+
+import * as courseModel from '../models/course.model.js';
+import * as categoryModel from '../models/category.model.js';
+import * as instructorModel from '../models/instructor.model.js';
+import * as sectionModel from '../models/section.model.js';
+import * as lessonModel from '../models/lesson.model.js';
+import { authRequired, requireInstructor } from '../middlewares/auth.mdw.js';
+
+const router = express.Router();
+
+/* ----------------------------- Helper utils ----------------------------- */
+function slugify(str = '') {
+  return String(str)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9\s-]/g, '')
+    .trim().replace(/\s+/g, '-')
+    .toLowerCase();
+}
+
+// Chuẩn hoá NaN -> null (cho các cột số)
+const toNum = (v) => {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+const sanitizeLongHtml = (html = '') =>
+  sanitizeHtml(html, {
+    allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'h1', 'h2', 'span', 'iframe']),
+    allowedAttributes: {
+      a: ['href', 'name', 'target', 'rel'],
+      img: ['src', 'alt', 'width', 'height', 'loading'],
+      iframe: ['src', 'width', 'height', 'allow', 'allowfullscreen', 'frameborder'],
+      '*': ['style'],
+    },
+  });
+
+// Lấy user trong session (tương thích cả 2 cách lưu)
+function getSessionUser(req) {
+  return req.session?.authUser || req.session?.user || null;
+}
+
+// Lấy instructor record từ session; trả về { user, inst } hoặc { error }
+async function getInstructorFromSession(req) {
+  const user = getSessionUser(req);
+  if (!user) return { error: 'NOT_LOGGED_IN' };
+  const inst = await instructorModel.findByUserId(user.id);
+  if (!inst) return { error: 'NO_INSTRUCTOR_RECORD', user };
+  return { user, inst };
+}
+
+/* ------------------------------- Upload setup ------------------------------ */
+// Lưu tạm: public/repouploads (public nhưng không phải thư mục final)
+// Final: public/uploads
+const REPO_DIR = 'public/uploads';
+const FINAL_DIR = 'public/uploads';
+fs.mkdirSync(REPO_DIR, { recursive: true });
+fs.mkdirSync(FINAL_DIR, { recursive: true });
+
+const fileFilter = (_req, file, cb) => {
+  const isImage = /^image\/(png|jpe?g|webp|gif)$/i.test(file.mimetype);
+  const isVideo = /^video\/(mp4|webm|ogg)$/i.test(file.mimetype);
+  if (!isImage && !isVideo) return cb(new Error('Only png/jpg/webp/gif/mp4/webm/ogg allowed'));
+  cb(null, true);
+};
+
+const repoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, REPO_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const base = path.basename(file.originalname, ext);
+    cb(null, `${slugify(base)}-${Date.now()}${ext}`);
+  },
+});
+
+const repoUpload = multer({
+  storage: repoStorage,
+  fileFilter,
+  limits: { fileSize: 1024 * 1024 * 200 }, // 200MB
+});
+
+function isRepoUrl(u = '') {
+  return typeof u === 'string' && u.startsWith('/uploads/');
+}
+
+// Move từ repouploads -> uploads, đặt tên gợi nhớ theo title (nếu có)
+function moveRepoToUploadsOrThrow(tempUrl, preferName = '') {
+  const fileName = tempUrl.replace('/uploads/', '');
+  const src = path.join('public', 'uploads', fileName);
+
+  const ext = path.extname(fileName);
+  const base = preferName ? slugify(preferName) : path.basename(fileName, ext);
+  const destName = `${base}-${Date.now()}${ext}`;
+  const dest = path.join('public', 'uploads', destName);
+
+  fs.renameSync(src, dest); // throw nếu lỗi I/O
+  return '/uploads/' + destName;
+}
+
+/* --------------------------- Auth protect all routes ---------------------------- */
+router.use(authRequired, requireInstructor);
+
+/* ------------------------------ Upload endpoint ------------------------------ */
+// ⬇️ Lưu TẠM vào repouploads, trả URL tạm (public, nhưng chưa là final)
+router.post('/upload', repoUpload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  const tempUrl = '/uploads/' + req.file.filename; // URL tạm
+  return res.status(201).json({ url: tempUrl, size: req.file.size, mime: req.file.mimetype });
+});
+
+// Multer error handler → trả JSON để client hiển thị
+router.use((err, _req, res, next) => {
+  if (err instanceof multer.MulterError || /Only .* allowed/i.test(err.message)) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+});
+
+/* ============================ INSTRUCTOR DASHBOARD (NEW) ============================ */
+/** ✅ Trang tổng quan giảng viên */
+router.get(['/instructor', '/'], async (req, res, next) => {
+  try {
+    const got = await getInstructorFromSession(req);
+    if (got.error === 'NOT_LOGGED_IN') {
+      req.session.returnUrl = req.originalUrl;
+      res.flash?.('warning', 'Please sign in.');
+      return res.redirect('/account/signin');
+    }
+    if (got.error === 'NO_INSTRUCTOR_RECORD') {
+      res.flash?.('danger', 'Account is not assigned an instructor role.');
+      return res.redirect('/');
+    }
+    const { inst: me } = got;
+
+    // Lấy tất cả khoá học (không phân trang)
+    const courses = await courseModel.findOverviewByInstructorAll?.(me.id)
+                    ?? await courseModel.findOverviewByInstructor(me.id, 1000000, 0);
+
+    const metrics = await courseModel.overviewMetrics(me.id);
+
+    return res.render('vwInstructor/index', {
+      user: req.session.authUser,
+      metrics,
+      courses,
+      startIndex: 0,
+    });
+  } catch (err) {
+    console.error('[GET /instructor] error:', err);
+    next(err);
+  }
+});
+
+/** ✅ Xem như sinh viên: /instructor/preview/:id */
+router.get('/preview/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.sendStatus(400);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(id);
+    if (!course) return res.sendStatus(404);
+    if (course.instructor_id !== me.id) return res.sendStatus(403);
+
+    const sections = await sectionModel.findByCourse(id);
+    const outline = await Promise.all(
+      sections.map(async (s) => ({ ...s, lessons: await lessonModel.findBySection(s.id) }))
+    );
+
+    let students_count = 0, rating_avg = null, rating_count = 0;
+    if (typeof courseModel.getCourseStats === 'function') {
+      const stats = await courseModel.getCourseStats(id);
+      students_count = Number(stats?.students_count || 0);
+      rating_avg = stats?.rating_avg != null ? Number(stats.rating_avg).toFixed(2) : null;
+      rating_count = Number(stats?.rating_count || 0);
+    }
+
+    res.render('vwInstructor/detail', {
+      title: 'Preview as Instructor',
+      course: { ...course, students_count, rating_avg, rating_count },
+      outline,
+      outlineEmpty: sections.length === 0,
+      hasReviews: rating_count > 0,
+      isInstructorPreview: true,
+    });
+  } catch (err) { next(err); }
+});
+
+/* ============================ INSTRUCTOR FEATURE (CŨ) ============================ */
+
+// 📘 My Courses list
+router.get('/my-course', async (req, res, next) => {
+  try {
+    const got = await getInstructorFromSession(req);
+    if (got.error === 'NOT_LOGGED_IN') {
+      req.session.returnUrl = req.originalUrl;
+      res.flash?.('warning', 'Please sign in.');
+      return res.redirect('/account/signin');
+    }
+    if (got.error === 'NO_INSTRUCTOR_RECORD') {
+      res.flash?.('danger', 'Account is not assigned an instructor role.');
+      return res.redirect('/');
+    }
+    const { inst: me } = got;
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = 6;
+    const offset = (page - 1) * limit;
+
+    const [rows, { amount }] = await Promise.all([
+      courseModel.findPageByInstructor(me.id, offset, limit, { excludeRemoved: true }),
+      courseModel.countByInstructors(me.id, { excludeRemoved: true }),
+    ]);
+
+    res.render('vwInstructor/my-course', {
+      title: 'My Courses',
+      courses: rows,
+      page,
+      totalPages: Math.max(1, Math.ceil(Number(amount || 0) / limit)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ============================ COURSES ============================ */
+
+// 📘 New Course form
+router.get('/courses/new', async (req, res, next) => {
+  try {
+    const categories = await categoryModel.findAll();
+    res.render('vwInstructor/edit-course', {
+      title: 'New Course',
+      categories,
+      course: {},
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 📘 Create Course (POST)
+router.post('/courses', async (req, res, next) => {
+  try {
+    const got = await getInstructorFromSession(req);
+    if (got.error === 'NOT_LOGGED_IN') {
+      req.session.returnUrl = req.originalUrl;
+      res.flash?.('warning', 'Please sign in.');
+      return res.redirect('/account/signin');
+    }
+    if (got.error === 'NO_INSTRUCTOR_RECORD') {
+      res.flash?.('danger', 'Account is not assigned an instructor role.');
+      return res.redirect('/');
+    }
+    const { inst: me } = got;
+
+    const payload = {
+      instructor_id: me.id,
+      cat_id: Number(req.body.cat_id),
+      title: req.body.title?.trim(),
+      short_desc: req.body.short_desc?.trim() || null,
+      long_desc_html: sanitizeLongHtml(req.body.long_desc_html || ''),
+      cover_url: req.body.cover_url || null,
+      price: toNum(req.body.price),
+      promo_price: toNum(req.body.promo_price),
+      is_removed: false,
+      is_completed: false,
+    };
+
+    // Validate số hợp lệ
+    if (payload.price == null && req.body.price?.trim()) {
+      res.flash('error', 'Invalid price.');
+      return res.redirect('/instructor/courses/new');
+    }
+    if (payload.promo_price == null && req.body.promo_price?.trim()) {
+      res.flash('error', 'Invalid promo price.');
+      return res.redirect('/instructor/courses/new');
+    }
+
+    // Validate logic
+    if (!payload.title) {
+      res.flash('error', 'Title cannot be empty.');
+      return res.redirect('/instructor/courses/new');
+    }
+    if (payload.price != null && payload.price < 0) {
+      res.flash('error', 'Invalid price.');
+      return res.redirect('/instructor/courses/new');
+    }
+    if (payload.promo_price != null && payload.price != null && payload.promo_price > payload.price) {
+      res.flash('error', 'Promo price cannot be greater than original price.');
+      return res.redirect('/instructor/courses/new');
+    }
+
+    // Category leaf
+    if (!Number.isFinite(payload.cat_id)) {
+      res.flash('error', 'Invalid category.');
+      return res.redirect('/instructor/courses/new');
+    }
+    const cat = await categoryModel.findById(payload.cat_id);
+    if (!cat) {
+      res.flash('error', 'Category does not exist.');
+      return res.redirect('/instructor/courses/new');
+    }
+    const rowCC = await categoryModel.countChildren?.(payload.cat_id)
+                   ?? await (async () => ({ amount: 0 }))();
+    const childCount = Number(rowCC?.amount ?? rowCC?.c ?? 0);
+    if (childCount > 0) {
+      res.flash('error', 'Please select a level-2 category (not a parent group).');
+      return res.redirect('/instructor/courses/new');
+    }
+
+    await courseModel.add(payload);
+    res.flash('success', 'Course created successfully.');
+    return res.redirect('/instructor');
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 📘 Edit Course form
+router.get('/courses/:id/edit', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.sendStatus(400);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(id);
+    if (!course) return res.sendStatus(404);
+    if (course.instructor_id !== me.id) return res.sendStatus(403);
+
+    const categories = await categoryModel.findAll();
+    res.render('vwInstructor/edit-course', {
+      title: 'Edit Course',
+      course,
+      categories,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 📘 Update Course (POST)
+router.post('/courses/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.sendStatus(400);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(id);
+    if (!course) return res.sendStatus(404);
+    if (course.instructor_id !== me.id) return res.sendStatus(403);
+
+    const patch = {
+      title: req.body.title?.trim(),
+      short_desc: req.body.short_desc?.trim() || null,
+      long_desc_html: sanitizeLongHtml(req.body.long_desc_html || ''),
+      cat_id: Number(req.body.cat_id),
+      cover_url: req.body.cover_url || course.cover_url || null,
+      price: toNum(req.body.price),
+      promo_price: toNum(req.body.promo_price),
+    };
+
+    // Validate số hợp lệ
+    if (patch.price == null && req.body.price?.trim()) {
+      res.flash('error', 'Invalid price.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+    if (patch.promo_price == null && req.body.promo_price?.trim()) {
+      res.flash('error', 'Invalid promo price.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+
+    // Validate logic
+    if (!patch.title) {
+      res.flash('error', 'Title cannot be empty.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+    if (patch.price != null && patch.price < 0) {
+      res.flash('error', 'Invalid price.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+    if (patch.promo_price != null && patch.price != null && patch.promo_price > patch.price) {
+      res.flash('error', 'Promo price cannot be greater than original price.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+
+    // Category leaf
+    if (!Number.isFinite(patch.cat_id)) {
+      res.flash('error', 'Invalid category.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+    const cat = await categoryModel.findById(patch.cat_id);
+    if (!cat) {
+      res.flash('error', 'Category does not exist.');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+    const rowCC = await categoryModel.countChildren?.(patch.cat_id)
+                   ?? await (async () => ({ amount: 0 }))();
+    const childCount = Number(rowCC?.amount ?? rowCC?.c ?? 0);
+    if (childCount > 0) {
+      res.flash('error', 'Please select a level-2 category (not a parent group).');
+      return res.redirect(`/instructor/courses/${id}/edit`);
+    }
+
+    await courseModel.patch(id, patch);
+    res.flash('success', 'Course updated successfully.');
+    return res.redirect('/instructor');
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 📘 Mark Course Completed (POST — chỉ khi đủ nội dung)
+router.post('/courses/:id/complete', authRequired, requireInstructor, async (req, res) => {
+  try {
+    const courseId = Number(req.params.id) || 0;
+    if (!courseId) {
+      res.flash?.('danger', 'Invalid Course ID.');
+      return res.redirect('/instructor/my-course');
+    }
+
+    const ok = await courseModel.canComplete(courseId);
+    if (!ok) {
+      res.flash?.('warning', 'Course does not have enough content (requires ≥1 section & ≥1 lesson).');
+      return res.redirect(`/instructor/courses/${courseId}/content`);
+    }
+
+    await courseModel.markCompleted(courseId);
+    res.flash?.('success', 'Course marked as completed.');
+    return res.redirect(`/instructor/courses/${courseId}/content`);
+  } catch (err) {
+    console.error('[COURSE/COMPLETE] ERROR =', err);
+    res.flash?.('danger', 'Error marking course as completed.');
+    return res.redirect('/instructor/my-course');
+  }
+});
+
+/* ===================== CONTENT MANAGEMENT (Sections & Lessons) ===================== */
+
+// Trang quản lý nội dung: load Sections + Lessons
+router.get('/courses/:id/content', async (req, res, next) => {
+  try {
+    const courseId = Number(req.params.id);
+    if (!Number.isFinite(courseId)) return res.sendStatus(400);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(courseId);
+    if (!course) return res.sendStatus(404);
+    if (course.instructor_id !== me.id) return res.sendStatus(403);
+
+    const sections = await sectionModel.findByCourse(courseId);
+    const sectionsWithLessons = await Promise.all(
+      sections.map(async s => ({ ...s, lessons: await lessonModel.findBySection(s.id) }))
+    );
+
+    res.render('vwInstructor/sections', {
+      title: 'Course Content',
+      course,
+      sections: sectionsWithLessons,
+    });
+  } catch (err) { next(err); }
+});
+
+// -------------------------- Sections CRUD --------------------------
+router.post('/sections', async (req, res) => {
+  const { course_id, title, order_no } = req.body;
+
+  try {
+    await sectionModel.add({
+      course_id: Number(course_id),
+      title: title?.trim(),
+      order_no: Number(order_no) || 1,
+    });
+
+    res.flash('success', 'Section added successfully.');
+    return res.redirect(`/instructor/courses/${Number(course_id)}/content`);
+
+  } catch (err) {
+    if (err.code === '23505') {
+      res.flash('danger', 'Order number already exists in this course. Please choose another order.');
+      return res.redirect(`/instructor/courses/${Number(course_id)}/content`);
+    }
+
+    console.error(err);
+    res.flash('danger', 'Unexpected error while adding section.');
+    return res.redirect(`/instructor/courses/${Number(course_id)}/content`);
+  }
+});
+
+router.post('/sections/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  let sec; // hoist để dùng lại ở catch
+
+  try {
+    sec = await sectionModel.findById(id);
+    if (!sec) return res.sendStatus(404);
+
+    const title = (req.body.title ?? '').trim();
+    const orderNo = parseInt(req.body.order_no, 10);
+
+    if (!Number.isInteger(orderNo) || orderNo < 1) {
+      res.flash('danger', 'Order number must be a positive integer.');
+      return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+    }
+
+    await sectionModel.patch(id, {
+      title,
+      order_no: orderNo,
+    });
+
+    res.flash('success', 'Section updated.');
+    return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+  } catch (err) {
+    console.error('Update section error:', err);
+
+    if (err.code === '23505' || err?.constraint === 'sections_course_id_order_no_key') {
+      res.flash('danger', 'Another section already uses that order number in this course.');
+    } else {
+      res.flash('danger', 'Unexpected error while updating section.');
+    }
+
+    const courseId = sec?.course_id;
+    return res.redirect(courseId
+      ? `/instructor/courses/${courseId}/content`
+      : '/instructor/my-course');
+  }
+});
+
+router.post('/sections/:id/delete', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.sendStatus(400);
+
+    const sec = await sectionModel.findById(id);
+    if (!sec) return res.sendStatus(404);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(sec.course_id);
+    if (!course || course.instructor_id !== me.id) return res.sendStatus(403);
+
+    const result = await sectionModel.safeRemove(id); // chỉ xoá khi không có lesson
+    if (!result.ok) {
+  res.flash('error', 'Cannot delete section because it still has lessons.');
+    } else {
+      res.flash('success', 'Section deleted.');
+    }
+    return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+  } catch (err) { next(err); }
+});
+
+// -------------------------- Lessons CRUD --------------------------
+
+// CREATE lesson (move URL tạm nếu cần)
+router.post('/lessons', async (req, res, next) => {
+  try {
+    const { section_id, title, video_url } = req.body;
+    const duration_sec = req.body.duration_sec ? Number(req.body.duration_sec) : null;
+    const is_preview = !!req.body.is_preview;
+
+    const sId = Number(section_id);
+    if (!Number.isFinite(sId)) return res.sendStatus(400);
+
+    const sec = await sectionModel.findById(sId);
+    if (!sec) return res.sendStatus(404);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(sec.course_id);
+    if (!course || course.instructor_id !== me.id) return res.sendStatus(403);
+
+    if (!title?.trim()) {
+      res.flash('error', 'Lesson title cannot be empty.');
+      return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+    }
+    if (!video_url?.trim()) {
+      res.flash('error', 'Please upload or enter a Video URL.');
+      return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+    }
+
+    // 🔁 Nếu là URL tạm (/repouploads/...), server sẽ finalize sang /uploads/... sau khi insert thành công
+    const finalVideoUrl = video_url.trim();
+
+    await lessonModel.addAutoOrder({
+      section_id: sId,
+      title: title.trim(),
+      video_url: finalVideoUrl,
+      duration_sec,
+      is_preview
+      // ⛔ KHÔNG truyền order_no
+    });
+
+    res.flash('success', 'Lesson created (order tự động).');
+    return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+  } catch (err) {
+    // nếu gặp 23505 hiếm hoi do race, cứ báo chung
+    console.error('Add lesson error:', err);
+    res.flash('danger', 'Could not create lesson. Please try again.');
+    return res.redirect('back');
+  }
+});
+
+
+// UPDATE lesson (move URL tạm nếu cần, xoá file cũ tuỳ chọn)
+router.post('/lessons/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.sendStatus(400);
+
+    const { title, video_url } = req.body;
+    const duration_sec = req.body.duration_sec ? Number(req.body.duration_sec) : null;
+    const is_preview = !!req.body.is_preview;
+
+    const les = await lessonModel.findById(id);
+    if (!les) return res.sendStatus(404);
+
+    const sec = await sectionModel.findById(les.section_id);
+    if (!sec) return res.sendStatus(404);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(sec.course_id);
+    if (!course || course.instructor_id !== me.id) return res.sendStatus(403);
+
+    if (!title?.trim()) {
+      res.flash?.('error', 'Lesson title cannot be empty.');
+      return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+    }
+    if (!video_url?.trim()) {
+      res.flash?.('error', 'Please upload or enter a Video URL.');
+      return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+    }
+
+    await lessonModel.patchNoOrder(id, {
+      title: title.trim(),
+      video_url: video_url.trim(),
+      duration_sec,
+      is_preview
+      // ⛔ KHÔNG cập nhật order_no
+    });
+
+    res.flash?.('success', 'Lesson updated.');
+    return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+  } catch (err) {
+    console.error('Update lesson error:', err);
+    res.flash?.('danger', 'Unexpected error while updating lesson.');
+    return res.redirect('back');
+  }
+});
+
+// Trang quản lý nội dung: load Sections + Lessons
+router.get('/courses/:id/content', async (req, res, next) => {
+  try {
+    const courseId = Number(req.params.id);
+    if (!Number.isFinite(courseId)) return res.sendStatus(400);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(courseId);
+    if (!course) return res.sendStatus(404);
+    if (course.instructor_id !== me.id) return res.sendStatus(403);
+
+    const sections = await sectionModel.findByCourse(courseId);
+    const sectionsWithLessons = await Promise.all(
+      sections.map(async s => {
+        const lessons = await lessonModel.findBySection(s.id);
+        // Tính next_order = (max order_no trong section) + 1, tối thiểu 1
+        const maxOrder = lessons.reduce((m, x) => Math.max(m, Number(x.order_no || 0)), 0);
+        const next_order = (maxOrder || 0) + 1;
+        return { ...s, lessons, next_order };
+      })
+    );
+
+    res.render('vwInstructor/sections', {
+      title: 'Course Content',
+      course,
+      sections: sectionsWithLessons,
+    });
+  } catch (err) { next(err); }
+});
+
+// GET fallback để tránh Cannot GET /instructor/lessons/:id (do form/mis-click)
+router.get('/lessons/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.sendStatus(400);
+  const les = await lessonModel.findById(id);
+  if (!les) return res.sendStatus(404);
+  const sec = await sectionModel.findById(les.section_id);
+  if (!sec) return res.sendStatus(404);
+  return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+});
+
+// DELETE lesson (tuỳ chọn xoá luôn file local nếu là /uploads/..)
+router.post('/lessons/:id/delete', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.sendStatus(400);
+
+    const les = await lessonModel.findById(id);
+    if (!les) return res.sendStatus(404);
+
+    const sec = await sectionModel.findById(les.section_id);
+    if (!sec) return res.sendStatus(404);
+
+    const got = await getInstructorFromSession(req);
+    if (got.error) return res.sendStatus(403);
+    const { inst: me } = got;
+
+    const course = await courseModel.findById(sec.course_id);
+    if (!course || course.instructor_id !== me.id) return res.sendStatus(403);
+
+    // (optional) Xoá file cũ
+    // if (les.video_url?.startsWith('/uploads/')) {
+    //   const p = path.join('public', les.video_url.replace(/^\//,''));
+    //   try { fs.unlinkSync(p); } catch {}
+    // }
+
+    await lessonModel.remove(id);
+    res.flash('success', 'Lesson deleted.');
+    return res.redirect(`/instructor/courses/${sec.course_id}/content`);
+  } catch (err) { next(err); }
+});
+
+export default router;
